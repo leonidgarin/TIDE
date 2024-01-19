@@ -1,0 +1,12 @@
+.env
+.venv
+env/
+venv/
+__pycache__/
+LICENSE
+readme.md
+pyproject.toml
+dist/
+examples/
+*.egg-info/
+*.egg
