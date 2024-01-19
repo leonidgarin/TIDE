@@ -5,7 +5,7 @@ TIDE - Time Invariant Discretization Engine
 This is a novel algorithm for binning task that takes into account stability of bins over different time periods.
 
 ## Quick start
-'''
+```Python
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
@@ -25,7 +25,7 @@ lr = LogisticRegression()
 lr.fit(X_woe,y)
 pred = lr.predict_proba(X_woe)[::,1]
 print(roc_auc_score(y,pred))
-'''
+```
 
 ## Functions
 - fit
