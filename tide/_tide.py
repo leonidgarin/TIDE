@@ -649,7 +649,7 @@ class TIDE:
             
             stats_per_i = pd.DataFrame({'period':[p]*n_bins,
                                         'variable':[xname]*n_bins,
-                                        'trend':trend*n_bins,
+                                        'trend':[trend]*n_bins,
                                         'bin':composed_bins_str,
                                         'n_obs':totals,
                                         'n_events':events,
