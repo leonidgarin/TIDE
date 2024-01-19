@@ -3,7 +3,7 @@ authors = [{name = "Leonid Garin", email = "leonidgarin97@gmail.com"}]
 name = "tide"
 version = "0.1.0"
 description = "Time Invariant Discretization Engine - tool for time stable binning"
-dependencies = ["numpy","scipy","tqdm","pandas","matplotlib","scikit-learn","warnings"]
+dependencies = ["numpy","scipy","tqdm","pandas","matplotlib","scikit-learn"]
 requires-python = ">=3.8"
 readme = "README.md"
 classifiers = [
