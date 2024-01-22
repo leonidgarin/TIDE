@@ -6,4 +6,4 @@ __pycache__/
 dist/
 examples/
 *.egg-info/
-*.egg
+*.eggpip

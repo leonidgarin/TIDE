@@ -37,7 +37,8 @@ def equal_size_binning_cont(x,
         A dict with continuous bins and their indexes.
         Example:
         {'bins':
-            {'cont':
+            {'trend':'unknown',
+             'cont':
                 {(-np.inf,0.45):0,
                  (0.45,3.29):1,
                  (3.29,10.33):2,
@@ -48,8 +49,8 @@ def equal_size_binning_cont(x,
     '''
     assert len(x) > 0
     assert n_bins >= 2
-    assert min_bound <= min(x)
-    assert max_bound >= max(x)
+    assert min_bound in ('col_min',) or min_bound <= min(x)
+    assert max_bound in ('col_max',) or max_bound >= max(x)
 
     q = np.linspace(0,100,n_bins+1)
     bounds = np.percentile(x,q)

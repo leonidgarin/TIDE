@@ -79,7 +79,10 @@ def calc_eventrates(x,
 
             if bintype == 'cont':
 
-                if round_brackets == 'right':
+                if abin[0] == abin[1]:
+                    idx_bin = x[idx_cont] == abin[0]
+
+                elif round_brackets == 'right':
                     idx_bin = (x[idx_cont] >= abin[0]) & (x[idx_cont] < abin[1])
 
                 elif round_brackets == 'left':
@@ -182,7 +185,10 @@ def calc_WoEs(x,
 
             if bintype == 'cont':
 
-                if round_brackets == 'right':
+                if abin[0] == abin[1]:
+                    idx_bin = x[idx_cont] == abin[0]
+
+                elif round_brackets == 'right':
                     idx_bin = (x[idx_cont] >= abin[0]) & (x[idx_cont] < abin[1])
 
                 elif round_brackets == 'left':
@@ -288,7 +294,10 @@ def calc_IVs(x,
 
             if bintype == 'cont':
 
-                if round_brackets == 'right':
+                if abin[0] == abin[1]:
+                    idx_bin = x[idx_cont] == abin[0]
+
+                elif round_brackets == 'right':
                     idx_bin = (x[idx_cont] >= abin[0]) & (x[idx_cont] < abin[1])
 
                 elif round_brackets == 'left':

@@ -4,11 +4,9 @@ TIDE - Time Invariant Discretization Engine
 Leonid Garin, 2023
 
 TODO:
-- Rewrite code for new IV, WoE, ER calc functions output - done
-- Transform - done
-- fit_transform - done
-- Plots - done
-- add composed bins functionality
+- add logic with combined missing and first/last continuos bins
+- add chi-merge to categorical bins
+- fix visial representation of bins - brackets
 '''
 import warnings
 
@@ -266,13 +264,15 @@ class TIDE:
         xname : str
             Name of exogenous variable
         '''
-        # Split x into continuous, discrete and missing parts
-        idx_cont, idx_cat, idx_missing = self.idx_from_mixed(x)
 
         x_arr = np.array(x,dtype='O')
         y_arr = np.array(y)
+
         per_arr = np.array(per)
         per_unique = np.unique(per_arr)
+
+        # Split x into continuous, discrete and missing parts
+        idx_cont, idx_cat, idx_missing = self.idx_from_mixed(x_arr)
 
         x_cont = x_arr[idx_cont]
         y_cont = y_arr[idx_cont]
@@ -286,14 +286,21 @@ class TIDE:
                 n_prebins = self.n_prebins
 
             # Pre-binning for trend determination
-            prebins_map = equal_size_binning_cont(x_cont, n_prebins)
+            prebins_map = equal_size_binning_cont(x_cont, n_prebins,min_bound='col_min',max_bound='col_max')
             prebins = self._compose_bins(prebins_map)['bins']
+            print(prebins)
+            if len(prebins.keys()) <= n_prebins and len(prebins.keys()) >= 2:
+                n_prebins = len(prebins.keys())
 
-            # Trend (a1 > 0 = positive, else negative; if no continous part, then positive)
-            prebins_eventrates = calc_eventrates(x_cont,y_cont,prebins)
-            a1, _ = np.polyfit(np.arange(n_prebins),prebins_eventrates,deg=1)
-            if np.isclose(a1,0):
-                a1 = 1
+                # Trend (a1 > 0 = positive, else negative)
+                prebins_eventrates = calc_eventrates(x_cont,y_cont,prebins)
+                print(prebins_eventrates)
+                a1, _ = np.polyfit(np.arange(n_prebins),prebins_eventrates,deg=1)
+                if np.isclose(a1,0):
+                    a1 = 1
+            else:
+                a1 = 1 #There is one continuous bin.
+                       #It probably means that the continuous part contains one (or too little) distinct values.
         else: #no continuous part
             a1 = 1
 
@@ -697,7 +704,7 @@ class TIDE:
 
             lines, labels = ax[0].get_legend_handles_labels()
             lines2, labels2 = ax_0_1.get_legend_handles_labels()
-            ax[0].legend(lines + lines2, labels + labels2, bbox_to_anchor=(0, 1), loc='center right')
+            ax[0].legend(lines + lines2, labels + labels2, bbox_to_anchor=(0, 1), loc='lower right')
             
             # Event rate per bin change over time
             stats_per_i = self.stats_per[self.stats_per['variable']==name].copy()
