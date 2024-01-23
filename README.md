@@ -33,9 +33,15 @@ print(roc_auc_score(y,pred))
 - fit_transform
 - plot
 
+## Userful stats
+- stats
+- stats_per
+- exog_bins
+- exog_woe
+
 ## Known issues
 - Stats does not show brackets properly for continuous bins
 
 ## Plan
 - Add chi-squared to the algorithm
-- 
+- Add missing combination with "best" or "worst" continuous bin

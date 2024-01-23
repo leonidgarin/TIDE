@@ -288,13 +288,11 @@ class TIDE:
             # Pre-binning for trend determination
             prebins_map = equal_size_binning_cont(x_cont, n_prebins,min_bound='col_min',max_bound='col_max')
             prebins = self._compose_bins(prebins_map)['bins']
-            print(prebins)
             if len(prebins.keys()) <= n_prebins and len(prebins.keys()) >= 2:
                 n_prebins = len(prebins.keys())
 
                 # Trend (a1 > 0 = positive, else negative)
                 prebins_eventrates = calc_eventrates(x_cont,y_cont,prebins)
-                print(prebins_eventrates)
                 a1, _ = np.polyfit(np.arange(n_prebins),prebins_eventrates,deg=1)
                 if np.isclose(a1,0):
                     a1 = 1
@@ -316,93 +314,95 @@ class TIDE:
         # According to the NumPy docs (see https://numpy.org/doc/stable/reference/generated/numpy.unique.html),
         # the np.unique function also sorts x
         # TODO: add logic with missing in first or last bin
-        x_cont_unique, idx_x_cont_unique = np.unique(x_cont,return_inverse=True)
+        cont_bounds = []
+        if np.any(idx_cont):
+            x_cont_unique, idx_x_cont_unique = np.unique(x_cont,return_inverse=True)
 
-        crosstab = x_cont_unique
+            crosstab = x_cont_unique
 
-        for p_i in per_unique:
-            p_counts = np.bincount(idx_x_cont_unique,weights = per_cont==p_i)
-            crosstab = np.vstack((crosstab,p_counts))
-            p_events = np.bincount(idx_x_cont_unique,weights = (per_cont==p_i)*y_cont)
-            crosstab = np.vstack((crosstab,p_events))
-            p_nonevents = p_counts - p_events
-            crosstab = np.vstack((crosstab,p_nonevents))
+            for p_i in per_unique:
+                p_counts = np.bincount(idx_x_cont_unique,weights = per_cont==p_i)
+                crosstab = np.vstack((crosstab,p_counts))
+                p_events = np.bincount(idx_x_cont_unique,weights = (per_cont==p_i)*y_cont)
+                crosstab = np.vstack((crosstab,p_events))
+                p_nonevents = p_counts - p_events
+                crosstab = np.vstack((crosstab,p_nonevents))
 
-        crosstab = crosstab.T
+            crosstab = crosstab.T
 
-        # Main cycle
-        idx_base = 0
-        idx_bounds = []
-        best_candidate = None
+            # Main cycle
+            idx_base = 0
+            idx_bounds = []
+            best_candidate = None
 
-        while idx_base < x_cont_unique.shape[0]:
+            while idx_base < x_cont_unique.shape[0]:
 
-            # Calculate cumulative event rate for every period
-            er_cumulative = crosstab[idx_base:, 2::3].cumsum(axis=0) / (self._epsilon + crosstab[idx_base:, 1::3].cumsum(axis=0))
+                # Calculate cumulative event rate for every period
+                er_cumulative = crosstab[idx_base:, 2::3].cumsum(axis=0) / (self._epsilon + crosstab[idx_base:, 1::3].cumsum(axis=0))
 
-            # Calculate right window function according to trend
-            if trend == 'pos':
-                er_right_window = np.minimum.accumulate(er_cumulative[::-1],axis=0)[::-1]
-            else: #neg
-                er_right_window = np.maximum.accumulate(er_cumulative[::-1],axis=0)[::-1]
-
-            # Choose candidate points that provide all the conditions for continuous part:
-            # Monotonicity for every period
-            cand_monotone = np.all(er_cumulative == er_right_window, axis=1)
-
-            # Candidate bin has equal or more than min_sample_rate * 100% observations out of total
-            cand_binsize = np.all((crosstab[idx_base:, 1::3].cumsum(axis=0) /
-                                   (self._epsilon + crosstab[:, 1::3].sum(axis=0))) >= self.min_sample_rate, axis=1)
-
-            # Every class is present with at least n=min_class_obs observations
-            cand_classprecense = np.all(crosstab[idx_base:, 2::3].cumsum(axis=0) >= self.min_class_obs, axis=1) \
-                                 & np.all(crosstab[idx_base:, 3::3].cumsum(axis=0) >= self.min_class_obs, axis=1)
-            
-            # TODO: add Chi-squared for previous bin
-
-            # Choose candidate point
-            best_candidate = np.argmax(np.all((cand_monotone,cand_binsize,cand_classprecense),axis=0))
-
-            # Accept candidate point, if the remaining space satisfies the conditions of min_sample_rate and min_class_obs
-            if crosstab[idx_base+best_candidate:].shape[0] > 0:
-                flag_remaining_binsize = np.any(np.all((crosstab[idx_base+best_candidate:, 1::3].cumsum(axis=0) /
-                                            (self._epsilon + crosstab[:, 1::3].sum(axis=0))) >= self.min_sample_rate, axis=1))
-                flag_remaining_classprecense = np.any(np.all(crosstab[idx_base+best_candidate:, 2::3].cumsum(axis=0) >= self.min_class_obs, axis=1) \
-                                        & np.all(crosstab[idx_base+best_candidate:, 3::3].cumsum(axis=0) >= self.min_class_obs, axis=1))
-            else:
-                flag_remaining_binsize = False
-                flag_remaining_classprecense = False
-
-            # Save point and update base index 
-            if best_candidate and flag_remaining_binsize and flag_remaining_classprecense:
-                idx_bounds.append(idx_base+best_candidate)
+                # Calculate right window function according to trend
                 if trend == 'pos':
-                    idx_base += best_candidate
+                    er_right_window = np.minimum.accumulate(er_cumulative[::-1],axis=0)[::-1]
+                else: #neg
+                    er_right_window = np.maximum.accumulate(er_cumulative[::-1],axis=0)[::-1]
+
+                # Choose candidate points that provide all the conditions for continuous part:
+                # Monotonicity for every period
+                cand_monotone = np.all(er_cumulative == er_right_window, axis=1)
+
+                # Candidate bin has equal or more than min_sample_rate * 100% observations out of total
+                cand_binsize = np.all((crosstab[idx_base:, 1::3].cumsum(axis=0) /
+                                    (self._epsilon + crosstab[:, 1::3].sum(axis=0))) >= self.min_sample_rate, axis=1)
+
+                # Every class is present with at least n=min_class_obs observations
+                cand_classprecense = np.all(crosstab[idx_base:, 2::3].cumsum(axis=0) >= self.min_class_obs, axis=1) \
+                                    & np.all(crosstab[idx_base:, 3::3].cumsum(axis=0) >= self.min_class_obs, axis=1)
+                
+                # TODO: add Chi-squared for previous bin
+
+                # Choose candidate point
+                best_candidate = np.argmax(np.all((cand_monotone,cand_binsize,cand_classprecense),axis=0))
+
+                # Accept candidate point, if the remaining space satisfies the conditions of min_sample_rate and min_class_obs
+                if crosstab[idx_base+best_candidate:].shape[0] > 0:
+                    flag_remaining_binsize = np.any(np.all((crosstab[idx_base+best_candidate:, 1::3].cumsum(axis=0) /
+                                                (self._epsilon + crosstab[:, 1::3].sum(axis=0))) >= self.min_sample_rate, axis=1))
+                    flag_remaining_classprecense = np.any(np.all(crosstab[idx_base+best_candidate:, 2::3].cumsum(axis=0) >= self.min_class_obs, axis=1) \
+                                            & np.all(crosstab[idx_base+best_candidate:, 3::3].cumsum(axis=0) >= self.min_class_obs, axis=1))
                 else:
-                    idx_base += best_candidate + 1
-            else: #Quit main cycle
-                break
+                    flag_remaining_binsize = False
+                    flag_remaining_classprecense = False
+
+                # Save point and update base index 
+                if best_candidate and flag_remaining_binsize and flag_remaining_classprecense:
+                    idx_bounds.append(idx_base+best_candidate)
+                    if trend == 'pos':
+                        idx_base += best_candidate
+                    else:
+                        idx_base += best_candidate + 1
+                else: #Quit main cycle
+                    break
+            
+            # Create bins
+            if self.min_bound == 'col_min':
+                min_bound = x_cont_unique.min() - self._epsilon
+            else:
+                min_bound = self.min_bound
+            if self.max_bound == 'col_max':
+                max_bound = x_cont_unique.max() + self._epsilon
+            else:
+                max_bound = self.max_bound
+
+            cont_bounds = np.r_[min_bound, x_cont_unique[idx_bounds], max_bound]
+
+        # Map for bins
+        bins_map = {'trend':trend, 'bins':dict()}
         
-        # Create bins
-        if self.min_bound == 'col_min':
-            min_bound = x_cont_unique.min() - self._epsilon
-        else:
-            min_bound = self.min_bound
-        if self.max_bound == 'col_max':
-            max_bound = x_cont_unique.max() + self._epsilon
-        else:
-            max_bound = self.max_bound
-
-        cont_bounds = np.r_[min_bound, x_cont_unique[idx_bounds], max_bound]
-
         # Handle categorical bins
         bins_cat = np.unique(x[idx_cat])
 
         # Handle missing bins
         bins_missing = np.unique(x[idx_missing])
-
-        # Map for bins
-        bins_map = {'trend':trend, 'bins':dict()}
 
         idx = 0
         for val in zip(cont_bounds[:-1],cont_bounds[1:]):
@@ -618,7 +618,7 @@ class TIDE:
                                                      return_counts=True)
         WoEs = calc_WoEs(x,y,composed_bins['bins'],idx_cont,round_brackets)
         IVs = calc_IVs(x,y,composed_bins['bins'],idx_cont,round_brackets)
-        IV = IVs.sum()
+        IV = np.nansum(IVs)
 
         # Write WoEs
         self.exog_woes[xname] = {idx:woe for idx,woe in zip(composed_bins['bins'].keys(),WoEs)}
