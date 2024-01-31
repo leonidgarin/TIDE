@@ -4,9 +4,9 @@ TIDE - Time Invariant Discretization Engine
 Leonid Garin, 2023
 
 TODO:
-- add logic with combined missing and first/last continuos bins
-- add chi-merge to categorical bins
-- fix visial representation of bins - brackets
+- add logic with combined missing and first/last continuous bins
+- add chi squared filter for point selection
+- fix visial representation of bin brackets
 '''
 import warnings
 
@@ -27,7 +27,7 @@ class TIDE:
                  min_sample_rate = 0.05,
                  min_class_obs = 1,
                  min_bound = -np.inf,
-                 max_bound = +np.inf,
+                 max_bound = np.inf,
                  n_prebins = 'log',
                  monotonic_strategy = 'simple',
                  missing_categories = [],
@@ -39,34 +39,31 @@ class TIDE:
         '''
         TIDE - Time Invariant Discretization Engine
 
-        Weight-of-Evidence (WoE) based binning is an useful
-        strategy to target-encode mixed-type exogenous variables
-        in the task of binary classification. This allows to
-        create robust models for regulatory purposes,
-        for example credit scorecards.
+        Binning is a technique to group values of exogenous variable.
+        After grouping, bins are used to target-encode the variable
+        with Weight of Evidence (WoE) values. Then WoE-transformed
+        variable can be used as feature for logistic regression.
+        This allows to build robust and interpretable models, which is
+        useful, for example, to create credit scorecards.
 
         The TIDE binning is performed on arrays containing mixed-type
         points: integers, floats, strings. The numbers are
         treated as continuous part, while strings as categorical;
         some strings as missing values.
 
-        TIDE provides and guarantees the following restrictions:
+        TIDE provides and guarantees the following restrictions for bins:
         - The trend of event rate in each subsequent bin
-        must be monotonical;
+        must be monotonical (positive or negative);
         - This trend must remain the same on different time
         intervals within the training data;
         - A bin must be at least 5%* size of total data
         observations;
         - A bin must contain at least 1* observation of
-        both classes
+        both classes;
         - Missing values must be taken into account: placed in
         separate bin if there are sufficient cases, or joined
         to some other bin (the "worst" / the "best").
         * values can be adjusted.
-
-        After bins calculation, one can perform WoE transformation
-        of exogenous variables and use the result as factors for
-        logistic regression.
 
         Attributes
         __________
@@ -108,15 +105,14 @@ class TIDE:
             behavior (f.e. np.nan != np.nan).
 
         missing_strategy : {'separate_bin','worst_bin','best_bin'} (default = 'separate_bin')
-            Defines the algorithm behavior on how to treat
-            missing values.
+            Defines the algorithm behavior on how to treat missing values.
             If 'separate_bin', then there will be special bin
             for missing values regardless of its size.
             Other strategies are not implemented yet.
 
         missing_rate : float (0.0 < float < 1.0) (default = 0.05)
             (Not implemented yet)
-            If missing_rate is higher (>=) then specified,
+            If missing_rate is higher (>=) than specified,
             the algorithm will create a separate bin for missings.
             Else, the algorithm will create composed bin according to chosen strategy.
             For 'worst_bin' and ascending trend, missings will be included in last bin.
@@ -242,7 +238,7 @@ class TIDE:
         for bin_type in ('cont','cat','missing'):
             binmap_i = bins_map['bins'].get(bin_type,dict())
             for b, idx in binmap_i.items():
-                composed['bins'][idx] = composed.get(idx,dict())
+                composed['bins'][idx] = composed['bins'].get(idx,dict())
                 composed['bins'][idx][b] = bin_type
 
         return composed
@@ -409,10 +405,65 @@ class TIDE:
             bins_map['bins']['cont'] = bins_map['bins'].get('cont',dict())
             bins_map['bins']['cont'][val] = idx
             idx += 1
-        for val in bins_cat:
-            bins_map['bins']['cat'] = bins_map['bins'].get('cat',dict())
-            bins_map['bins']['cat'][val] = idx
-            idx += 1
+        if self.cat_strategy == 'separate_bin':
+            for val in bins_cat:
+                bins_map['bins']['cat'] = bins_map['bins'].get('cat',dict())
+                bins_map['bins']['cat'][val] = idx
+                idx += 1
+        elif self.cat_strategy == 'chi-squared':
+            if len(bins_cat) > 0:
+                bins_chi = [(i,) for i in bins_cat]
+                pvalue_map = dict()
+                # Initial p-value calculation
+                for bin_i in bins_chi:
+                    for bin_j in bins_chi:
+                        if bin_i == bin_j or frozenset((bin_i,bin_j)) in pvalue_map.keys():
+                            continue
+                        pvalue_map[frozenset((bin_i,bin_j))] = ss.chi2_contingency([[(y[np.isin(x,bin_i)]==0).sum(),
+                                                                                    (y[np.isin(x,bin_i)]==1).sum()],
+                                                                                    [(y[np.isin(x,bin_j)]==0).sum(),
+                                                                                    (y[np.isin(x,bin_j)]==1).sum()]]).pvalue
+                # Chi-merge cycle
+                while True:
+                    # Find maximum p-value between two bins
+                    if len(pvalue_map) == 0:
+                        break
+                    bins_max, pvalue = max(pvalue_map.items(), key = lambda x:x[1])
+                    if pvalue <= self.alpha_significance:
+                        break
+                    
+                    # Remove bins
+                    bins_chi = [i for i in bins_chi if not i in bins_max]
+                
+                    # Remove pvalues
+                    keys = list(pvalue_map.keys())
+                    for key in keys:
+                        for b in key:
+                            if b in bins_max:
+                                pvalue_map.pop(key)
+                                break
+
+                    # Add composed bin
+                    new_bin = ()
+                    for i in bins_max:
+                        new_bin += i
+                    bins_chi.append(new_bin)
+
+                    # Calculate pvalues
+                    for bin_i in bins_chi:
+                        if bin_i == new_bin or frozenset((bin_i,new_bin)) in pvalue_map.keys():
+                            continue
+                        pvalue_map[frozenset((bin_i,new_bin))] = ss.chi2_contingency([[(y[np.isin(x,bin_i)]==0).sum(),
+                                                                                    (y[np.isin(x,bin_i)]==1).sum()],
+                                                                                    [(y[np.isin(x,new_bin)]==0).sum(),
+                                                                                    (y[np.isin(x,new_bin)]==1).sum()]]).pvalue
+                # Save bins
+                for composed_bins in bins_chi:
+                    for b in composed_bins:
+                        bins_map['bins']['cat'] = bins_map['bins'].get('cat',dict())
+                        bins_map['bins']['cat'][b] = idx
+                    idx += 1
+
         for val in bins_missing:
             bins_map['bins']['missing'] = bins_map['bins'].get('missing',dict())
             bins_map['bins']['missing'][val] = idx #same index
@@ -421,7 +472,6 @@ class TIDE:
         self.exog_bins[xname] = self._compose_bins(bins_map)
 
         # Calculate stats
-
         self._calc_stats(x_arr,
                          y_arr,
                          per_arr,
