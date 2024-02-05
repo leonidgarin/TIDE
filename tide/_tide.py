@@ -450,35 +450,60 @@ class TIDE:
         # Handle missing bins
         bins_missing = np.unique(x[idx_missing])
 
+        # Compose final bins
         idx = 0
+
+        #continuous
         for val in zip(cont_bounds[:-1],cont_bounds[1:]):
             bins_map['bins']['cont'] = bins_map['bins'].get('cont',dict())
             bins_map['bins']['cont'][val] = idx
             idx += 1
+
+        #categorical
         if self.cat_strategy == 'separate_bin':
             for val in bins_cat:
                 bins_map['bins']['cat'] = bins_map['bins'].get('cat',dict())
                 bins_map['bins']['cat'][val] = idx
                 idx += 1
+
         elif self.cat_strategy == 'chi-squared':
+
             if len(bins_cat) > 0:
                 bins_chi = [(i,) for i in bins_cat]
                 pvalue_map = dict()
+
                 # Initial p-value calculation
                 for bin_i in bins_chi:
+
                     for bin_j in bins_chi:
+
                         if bin_i == bin_j or frozenset((bin_i,bin_j)) in pvalue_map.keys():
                             continue
-                        pvalue_map[frozenset((bin_i,bin_j))] = ss.chi2_contingency([[(y[np.isin(x,bin_i)]==0).sum(),
-                                                                                    (y[np.isin(x,bin_i)]==1).sum()],
-                                                                                    [(y[np.isin(x,bin_j)]==0).sum(),
-                                                                                    (y[np.isin(x,bin_j)]==1).sum()]]).pvalue
+
+                        n_i_0 = (y[np.isin(x,bin_i)]==0).sum()
+                        n_i_1 = (y[np.isin(x,bin_i)]==1).sum()
+                        n_j_0 = (y[np.isin(x,bin_j)]==0).sum()
+                        n_j_1 = (y[np.isin(x,bin_j)]==1).sum()
+
+                        if ((n_i_0, n_i_1, n_j_0, n_j_1).count(0) >= 2
+                            and not ((n_i_0 == 0 and n_i_1 > 0 and n_j_0 > 0 and n_j_1 == 0)
+                                     or (n_i_0 > 0 and n_i_1 == 0 and n_j_0 == 0 and n_j_1 > 0))):
+                            pvalue = 1
+                        else:
+                            pvalue = ss.chi2_contingency([[n_i_0, n_i_1],
+                                                          [n_j_0, n_j_1]]).pvalue
+                            
+                        pvalue_map[frozenset((bin_i,bin_j))] = pvalue
+
                 # Chi-merge cycle
                 while True:
+                    
                     # Find maximum p-value between two bins
                     if len(pvalue_map) == 0:
                         break
+
                     bins_max, pvalue = max(pvalue_map.items(), key = lambda x:x[1])
+
                     if pvalue <= self.alpha_significance:
                         break
                     
@@ -498,15 +523,28 @@ class TIDE:
                     for i in bins_max:
                         new_bin += i
                     bins_chi.append(new_bin)
+                    print(len(bins_chi))
 
                     # Calculate pvalues
                     for bin_i in bins_chi:
                         if bin_i == new_bin or frozenset((bin_i,new_bin)) in pvalue_map.keys():
                             continue
-                        pvalue_map[frozenset((bin_i,new_bin))] = ss.chi2_contingency([[(y[np.isin(x,bin_i)]==0).sum(),
-                                                                                    (y[np.isin(x,bin_i)]==1).sum()],
-                                                                                    [(y[np.isin(x,new_bin)]==0).sum(),
-                                                                                    (y[np.isin(x,new_bin)]==1).sum()]]).pvalue
+
+                        n_i_0 = (y[np.isin(x,bin_i)]==0).sum()
+                        n_i_1 = (y[np.isin(x,bin_i)]==1).sum()
+                        n_j_0 = (y[np.isin(x,new_bin)]==0).sum()
+                        n_j_1 = (y[np.isin(x,new_bin)]==1).sum()
+                        
+                        if ((n_i_0, n_i_1, n_j_0, n_j_1).count(0) >= 2
+                            and not ((n_i_0 == 0 and n_i_1 > 0 and n_j_0 > 0 and n_j_1 == 0)
+                                     or (n_i_0 > 0 and n_i_1 == 0 and n_j_0 == 0 and n_j_1 > 0))):
+                            pvalue = 1
+                        else:
+                            pvalue = ss.chi2_contingency([[n_i_0, n_i_1],
+                                                          [n_j_0, n_j_1]]).pvalue
+                       
+                        pvalue_map[frozenset((bin_i,new_bin))] = pvalue
+
                 # Save bins
                 for composed_bins in bins_chi:
                     for b in composed_bins:
@@ -514,11 +552,12 @@ class TIDE:
                         bins_map['bins']['cat'][b] = idx
                     idx += 1
 
+        #missing
         for val in bins_missing:
             bins_map['bins']['missing'] = bins_map['bins'].get('missing',dict())
             bins_map['bins']['missing'][val] = idx #same index
 
-        # Save bins
+        # Save composed bins
         self.exog_bins[xname] = self._compose_bins(bins_map)
 
         # Calculate stats
