@@ -365,7 +365,7 @@ class TIDE:
 
                 r_missing = x_missing.shape[0] / x_arr.shape[0]
     
-                if r_missing < self.missing_rate:
+                if 0 < r_missing < self.missing_rate:
 
                     included_missing = True
 
