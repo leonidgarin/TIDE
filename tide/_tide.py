@@ -188,7 +188,8 @@ class TIDE:
                                                  'n_obs',
                                                  'n_events',
                                                  'event_rate',
-                                                 'PSI'])
+                                                 'PSI_seq',
+                                                 'PSI_base'])
         
         # Behavior arguments       
         assert 0.0 < min_sample_rate < 1.0
@@ -858,9 +859,10 @@ class TIDE:
         # Calculate stats for every period
         per_unique = np.unique(per)
 
-        PSIs = calc_PSIs(x,y,per,composed_bins['bins'],idx_cont,round_brackets)
+        PSIs_seq = calc_PSIs(x,y,per,composed_bins['bins'],idx_cont,round_brackets,'sequential')
+        PSIs_base = calc_PSIs(x,y,per,composed_bins['bins'],idx_cont,round_brackets,'on_base')
 
-        for p,PSI in zip(per_unique,PSIs):
+        for p, PSI_seq, PSI_base in zip(per_unique, PSIs_seq, PSIs_base):
             eventrates, events, totals = calc_eventrates(x[per==p],
                                                          y[per==p],
                                                          composed_bins['bins'],
@@ -868,14 +870,15 @@ class TIDE:
                                                          round_brackets,
                                                          return_counts=True)
             
-            stats_per_i = pd.DataFrame({'period':[p]*n_bins,
-                                        'variable':[xname]*n_bins,
-                                        'trend':[trend]*n_bins,
+            stats_per_i = pd.DataFrame({'period':[p] * n_bins,
+                                        'variable':[xname] * n_bins,
+                                        'trend':[trend] * n_bins,
                                         'bin':composed_bins_str,
                                         'n_obs':totals,
                                         'n_events':events,
                                         'event_rate':eventrates,
-                                        'PSI':[PSI]*n_bins})
+                                        'PSI_seq':[PSI_seq] * n_bins,
+                                        'PSI_base':[PSI_base] * n_bins})
             if self.stats_per.empty:
                 self.stats_per = stats_per_i
             else:
@@ -897,7 +900,8 @@ class TIDE:
 
             plt.rc('font', size=8)
             fig, ax = plt.subplots(1,3, figsize=figsize,dpi=dpi)
-            fig.suptitle(f'Binning results for {name}')
+            iv = self.stats[self.stats["variable"]==name]["IV_total"].max()
+            fig.suptitle(f'Binning results for {name}\nIV={iv:.4f}')
 
             # Result of binning on all periods
             ax[0].set_title('Bin stats')
@@ -911,7 +915,7 @@ class TIDE:
             ax[0].set_ylabel('Bin size')
 
             ax_0_1 = ax[0].twinx()
-            ax_0_1.plot(stats_i['bin'],stats_i['event_rate'],label='event_rate',color='blue',marker='.')
+            ax_0_1.plot(stats_i['bin'],stats_i['event_rate'],label='event_rate',color='darkblue',marker='.')
             for i,row in stats_i.iterrows():
                 ax_0_1.annotate(f'{row["event_rate"]:.4f}',(i,row['event_rate']),ha='center')
             ax_0_1.set_ylabel('Event rate')
@@ -951,12 +955,21 @@ class TIDE:
             
             ax_2_1 = ax[2].twinx()
             ax_2_1.plot(stats_per_i[stats_per_i['bin']==b]['period'].astype('str'),
-                       stats_per_i[stats_per_i['bin']==b]['PSI'], marker = '.', color = 'green', label = 'PSI')
+                       stats_per_i[stats_per_i['bin']==b]['PSI_seq'], marker = '.', color = 'green', label = 'PSI_seq')
             
-            for i,val in enumerate(stats_per_i[stats_per_i['bin']==b]['PSI'].values):
+            for i,val in enumerate(stats_per_i[stats_per_i['bin']==b]['PSI_seq'].values):
+                ax_2_1.annotate(f'{val:.3f}',(i,val),ha='center')
+
+            ax_2_1.plot(stats_per_i[stats_per_i['bin']==b]['period'].astype('str'),
+                       stats_per_i[stats_per_i['bin']==b]['PSI_base'], marker = '.', color = 'darkblue', label = 'PSI_base')
+            
+            for i,val in enumerate(stats_per_i[stats_per_i['bin']==b]['PSI_base'].values):
                 ax_2_1.annotate(f'{val:.3f}',(i,val),ha='center')
             
-            ax_2_1.set_ylim(0,np.clip(stats_per_i['PSI'].fillna(0).max(), a_min=1,a_max=1000))
+            ax_2_1.set_ylim(0,np.clip(a = max(stats_per_i['PSI_seq'].fillna(0).max() * 1.1,
+                                            stats_per_i['PSI_base'].fillna(0).max() * 1.1),
+                                      a_min = 1,
+                                      a_max = 1000))
             ax_2_1.set_ylabel('PSI')
 
             lines, labels = ax[2].get_legend_handles_labels()

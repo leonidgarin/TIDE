@@ -340,6 +340,7 @@ def calc_PSIs(x,
               composed_bins,
               idx_cont=None,
               round_brackets='right',
+              how = 'sequential',
               epsilon=1e-6):
     ''' 
     Calculates Population Stability Index:
@@ -379,6 +380,11 @@ def calc_PSIs(x,
         by small delta.
         For example, if min bound is 1, the adjusted should be 1 - 1e-6;
         if max bound is 10, the adjusted should be 10 + 1e-6.
+
+    how : {'sequential','on_base'}
+        Calculate PSI:
+        sequential - compare period by period,
+        on_base - compare all periods with the first one
     
     epsilon : float > 0, default=1e-6
         Small value that is used for safe math
@@ -393,7 +399,12 @@ def calc_PSIs(x,
 
     PSIs = [np.nan, ]
 
-    for per_old, per_new in zip(per_unique[:-1],per_unique[1:]):
+    if how == 'sequential':
+        per_iter = zip(per_unique[:-1], per_unique[1:])
+    elif how == 'on_base':
+        per_iter = zip([per_unique[0]] * len(per_unique-1), per_unique[1:])
+
+    for per_old, per_new in per_iter:
         _, _, n_totals_old = calc_eventrates(x = x[per==per_old],
                                              y = y[per==per_old],
                                              composed_bins = composed_bins,
