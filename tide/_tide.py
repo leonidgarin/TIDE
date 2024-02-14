@@ -685,6 +685,9 @@ class TIDE:
 
         if reset:
             self.exog_bins = dict()
+            self.exog_woes = dict()
+            self.stats = self.stats.drop(self.stats.index)
+            self.stats_per = self.stats_per.drop(self.stats_per.index)
 
         progress = tqdm(X.columns, disable=disable_tqdm)
         for col in progress:

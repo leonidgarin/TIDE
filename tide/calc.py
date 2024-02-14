@@ -402,7 +402,7 @@ def calc_PSIs(x,
     if how == 'sequential':
         per_iter = zip(per_unique[:-1], per_unique[1:])
     elif how == 'on_base':
-        per_iter = zip([per_unique[0]] * len(per_unique-1), per_unique[1:])
+        per_iter = zip([per_unique[0]] * (len(per_unique)-1), per_unique[1:])
 
     for per_old, per_new in per_iter:
         _, _, n_totals_old = calc_eventrates(x = x[per==per_old],
