@@ -7,7 +7,7 @@ TODO:
 - add chi-merge for continuous groups
 - fix visual representation of bin brackets
 - add multiprocessing to bins calculation
-- write tests finally
+- write more tests
 - modify transform: if value is not presented in bins, then keep it as is/transform as missing/transform as worst
 - mandatory missing as worst/best when no missing values in column (add parameter)
 - cover case when cont bin contains only one unique value
@@ -113,10 +113,20 @@ class TIDE:
             Note that np.nan is not allowed because it has unpredictable
             behavior (f.e. np.nan != np.nan).
 
-        missing_strategy : {'separate_bin','worst_bin','best_bin'} (default = 'separate_bin')
+        missing_strategy : {'separate_bin', 'worst_bin', 'best_bin',
+                            'forced_separate_bin', 'forced_worst_bin',
+                            'forced_best_bin'} (default = 'separate_bin')
             Defines the algorithm behavior on how to treat missing values.
             If 'separate_bin', then there will be special bin
-            for missing values regardless of its size.
+            for missing values regardless of its size (must be at least 1 observation,
+            else there will no missing bin).
+            If 'worst_bin', missings will be included in the bin with
+            highest event rate in case when missing_rate is lower than specified.
+            If 'best_bin', missings will be included in the bin with
+            lowest event rate in case when missing_rate is lower than specified.
+            If 'forced_separate_bin'
+            If 'forced_worst_bin'
+            If 'forced_best_bin'
 
         missing_rate : float (0.0 < float < 1.0) (default = 0.05)
             (Not implemented yet)
@@ -348,7 +358,6 @@ class TIDE:
         if np.any(idx_cont):
 
             # Calculate crosstab for sorted unique x (continuous part) and periods
-            # and number of observations per period.
             # Every period has three columns: count of observations,
             # count of events per unique x, count of non-events
 
