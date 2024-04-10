@@ -8,7 +8,6 @@ TODO:
 - fix visual representation of bin brackets
 - add multiprocessing to bins calculation
 - write more tests
-- modify transform: if value is not presented in bins, then keep it as is/transform as missing/transform as worst
 - mandatory missing as worst/best when no missing values in column (add parameter)
 - cover case when cont bin contains only one unique value
 '''
@@ -113,9 +112,7 @@ class TIDE:
             Note that np.nan is not allowed because it has unpredictable
             behavior (f.e. np.nan != np.nan).
 
-        missing_strategy : {'separate_bin', 'worst_bin', 'best_bin',
-                            'forced_separate_bin', 'forced_worst_bin',
-                            'forced_best_bin'} (default = 'separate_bin')
+        missing_strategy : {'separate_bin', 'worst_bin', 'best_bin'} (default = 'separate_bin')
             Defines the algorithm behavior on how to treat missing values.
             If 'separate_bin', then there will be special bin
             for missing values regardless of its size (must be at least 1 observation,
@@ -124,9 +121,6 @@ class TIDE:
             highest event rate in case when missing_rate is lower than specified.
             If 'best_bin', missings will be included in the bin with
             lowest event rate in case when missing_rate is lower than specified.
-            If 'forced_separate_bin'
-            If 'forced_worst_bin'
-            If 'forced_best_bin'
 
         missing_rate : float (0.0 < float < 1.0) (default = 0.05)
             (Not implemented yet)
@@ -663,6 +657,8 @@ class TIDE:
         '''
         Fit one or many variables
 
+        Arguments
+        _________
         X : pd.DataFrame
             An object that contains named arrays of exogenous variable observations.
             Can be mixed-type. Note that observations must not contain nan or inf values.
@@ -709,7 +705,7 @@ class TIDE:
         
 
 
-    def _transform_single(self,x,xname):
+    def _transform_single(self,x,xname,handle_unknown):
         '''Transform single variable'''
         composed_bins = self.exog_bins[xname]
         woes = self.exog_woes[xname]
@@ -740,16 +736,73 @@ class TIDE:
                 else:
                     raise ValueError(f'Bin type {bintype} is not supported')
                 
-        # Check for unchanged values                
-        if np.any(x == x_woe):
-            warnings.warn(f'There are values in variable "{xname}" that remained unchanged after WoE transformation. Check if your bins cover all the possible values.')
+        # Check for unchanged values and handle them
+        idx_unchanged = x == x_woe            
+        if np.any(idx_unchanged):
+
+            if handle_unknown == 'keep':
+                pass
+            
+            elif handle_unknown == 'worst':
+                x_woe[idx_unchanged] = min(woes.values())
+            
+            elif handle_unknown == 'best':
+                x_woe[idx_unchanged] = max(woes.values())
+            
+            elif handle_unknown in ('missing_worst', 'missing_best'):
+                found_missing_bin = False
+                idx_mw = -1
+                for idx, atomic_bins in composed_bins['bins'].items():
+                    for b, bintype in atomic_bins.items():
+                        if bintype == 'missing':
+                            found_missing_bin = True
+                            idx_mw = idx
+                    if found_missing_bin:
+                        break
+                if idx_mw >= 0:
+                    woe_i = woes[idx_mw]
+                else:
+                    if handle_unknown == 'missing_worst':
+                        woe_i = min(woes.values())
+                    if handle_unknown == 'missing_best':
+                        woe_i = max(woes.values())
+                x_woe[idx_unchanged] = woe_i
+                
+            else:
+                raise ValueError(f'handle_unknown {handle_unknown} is not supported')
+            
+            warnings.warn(f'There are values in variable "{xname}" that are not covered by fitted bins and treated as "{handle_unknown}" by WoE.')
 
         return x_woe
 
 
 
-    def transform(self,X, xnames=None):
-        '''Transform variable using previously calculated bins'''
+    def transform(self, X, xnames=None, handle_unknown='keep'):
+        '''
+        Transform variable using previously calculated bins
+        Arguments
+        _________
+        X : pd.DataFrame | pd.Series | np.array
+            Data to transform using fitted bins and WoE values
+        xnames : array-like
+            Column names
+        handle_unknown : {'keep', 'worst', 'best', 'missing_worst', 'missing_best'} (default = 'keep')
+            Specifies behavior on how to treat values that are not
+            covered by bins. This usually happens to values that
+            were not present in training sample when TIDE was fitted.
+            Possible options:
+            - 'keep': do not apply WoE transformation to such values
+            - 'worst' : use lowest WoE already fitted
+            - 'best' : use highest WoE already fitted
+            - 'missing_worst' : try to find bin with missing values and use its WoE,
+                if not found - use lowest WoE among all bins 
+            - 'missing_best' : try to find bin with missing values and use its WoE,
+                if not found - use highest WoE among all bins 
+
+        Returns
+        _______
+        Transformed dataset
+        '''
         
         # DataFrames
         if isinstance(X, pd.DataFrame):
@@ -765,7 +818,7 @@ class TIDE:
             # Transform
             for name in xnames:
                 x = X[name]
-                df_transformed[f'{name}_woe'] = self._transform_single(x,name)
+                df_transformed[f'{name}_woe'] = self._transform_single(x,name,handle_unknown)
             return df_transformed
         
         # Series
@@ -776,7 +829,7 @@ class TIDE:
                 raise KeyError(f'Variable {name} not found in exog_bins')
             self._validate_naninf(X)
             # Transform
-            return pd.Series(self._transform_single(X,name), name=f'{name}_woe')
+            return pd.Series(self._transform_single(X,name,handle_unknown), name=f'{name}_woe')
         
         if isinstance(X,np.ndarray):
             transformed = []
@@ -793,9 +846,9 @@ class TIDE:
             # Transform
             for i,name in enumerate(xnames):
                 x = X[::,i]
-                transformed.append(self._transform_single(x,name))
+                transformed.append(self._transform_single(x,name,handle_unknown))
             return np.array(transformed).T
-            
+
 
 
     def fit_transform(self,X,y,per,reset=True,return_bins=False):

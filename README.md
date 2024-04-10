@@ -18,6 +18,9 @@ The algorithm features:
 - Stats table and plots for binning result evaluation
 - ...and more!
 
+## Installation
+Download .tar.gz to your local machine from [Latest Release Page](https://github.com/leonidgarin/TIDE/releases/latest), then 'pip install <path to package>.tar.gz' using terminal.
+
 ## Quick start
 - Basic usage
 ```Python
@@ -82,6 +85,5 @@ mytide.exog_woe
 - Fix visual representation of bin brackets
 - Add multiprocessing to bins calculation
 - Write more tests
-- Modify transform: if value is not presented in bins, then keep it as is/transform as missing/transform as worst
 - Mandatory missing as worst/best when no missing values in column (add parameter)
 - Cover case when cont bin contains only one unique value
