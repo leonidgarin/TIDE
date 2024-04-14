@@ -4,7 +4,6 @@ TIDE - Time Invariant Discretization Engine
 Leonid Garin, 2023
 
 TODO:
-- add chi-merge for continuous groups
 - fix visual representation of bin brackets
 - add multiprocessing to bins calculation
 - write more tests
@@ -35,7 +34,6 @@ class TIDE:
                  max_bound = np.inf,
                  min_er_delta = 0.0,
                  n_prebins = 'log',
-                 monotonic_strategy = 'simple',
                  missing_categories = [],
                  missing_strategy = 'separate_bin',
                  missing_rate = 0.05,
@@ -98,15 +96,6 @@ class TIDE:
             formula is used:
             n_prebins = max(3,ceil(log(N_total)))
 
-        monotonic_strategy : {'simple', 'chi-squared'} (default = 'simple')
-            Specifies algorithm behavior regarding the monotonicity
-            constraint during the process of boundary points selection.
-            If 'simple', then the event rate in each subsequent bin
-            will be monotonically increasing (decreasing), but
-            similar bins can appear.
-            If 'chi-squared' (not implemented), then bins will be merged using
-            chi-merge algorithm after main cycle.
-
         missing_categories : list of str
             This list must contain categories that must be treated as missing.
             Note that np.nan is not allowed because it has unpredictable
@@ -132,13 +121,16 @@ class TIDE:
             For 'best_bin' and ascending trend, missings will be included in first bin.
             For 'best_bin' and descending trend, missing will be included in last bin.
 
-        cat_strategy : {'separate_bin','chi-squared'} (default = 'separate_bin')
+        cat_strategy : {'separate_bin','chi-squared','tide'} (default = 'separate_bin')
             This option specifies how the algorithm handles the
             categorical bins. Note that these strategies will not
             ensure stability of categorical bins over time.
             If 'separate_bin', then they will be kept as is.
-            If 'chi-squared', then the algorithm will loop merge bins
+            If 'chi-squared', then the algorithm will loop merge categorical bins
             using chi-squared test (see ChiMerge by R.Kerber, 1992).
+            If 'tide', then algorithm will loop merge categorical and continuous bins
+            using square distance between event rate curves until no curve intersections
+            present. Note: If one wants to include missings to achieve time stability
 
         alpha_significance : float, (0.0 < float < 0.5, default = 0.05)
             The specified threshold for p-value to reject
@@ -217,9 +209,6 @@ class TIDE:
             assert n_prebins >= 2
         self.n_prebins = n_prebins
 
-        assert monotonic_strategy in {'simple', 'chi-squared'}
-        self.monotonic_strategy = monotonic_strategy
-
         assert (isinstance(missing_categories,(list,tuple,set,np.ndarray))
                 and all([isinstance(i,self._acceptable_types_cat) for i in missing_categories]))
         self.missing_categories = missing_categories
@@ -230,7 +219,7 @@ class TIDE:
         assert 0.0 < missing_rate < 1.0
         self.missing_rate = missing_rate
 
-        assert cat_strategy in {'separate_bin','chi-squared'}
+        assert cat_strategy in {'separate_bin','chi-squared','tide'}
         self.cat_strategy = cat_strategy
 
         assert 0.0 < alpha_significance < 0.5
@@ -244,7 +233,7 @@ class TIDE:
 
     def idx_from_mixed(self,x):
         '''
-        Takes mixed-type column and return boolean indexes
+        Takes mixed-type column and returns boolean indexes
         for its continuous, categorical and missing values
         '''
         idx_cont = np.array([isinstance(val, self._acceptable_types_cont)\
@@ -323,6 +312,7 @@ class TIDE:
                                                   min_bound='col_min',
                                                   max_bound='col_max')
             prebins = self._compose_bins(prebins_map)['bins']
+
             if len(prebins.keys()) <= n_prebins and len(prebins.keys()) >= 2:
                 n_prebins = len(prebins.keys())
 
@@ -358,8 +348,8 @@ class TIDE:
             x_cont_unique, idx_x_cont_unique = np.unique(x_cont,
                                                          return_inverse=True)  # According to the NumPy docs
                                                                                # (see https://numpy.org/doc/stable/reference/generated/numpy.unique.html),
-                                                                               # the np.unique function also sorts x
-            x_unique = x_cont_unique
+                                                                               # the np.unique function also sorts x in ascending order
+            x_unique = x_cont_unique #?
             idx_x_unique = idx_x_cont_unique
             per_x = per_cont
             y_x = y_cont
@@ -372,7 +362,6 @@ class TIDE:
                 if 0 < r_missing < self.missing_rate:
 
                     included_missing = True
-
                     x_missing_unique, idx_x_missing_unique = np.unique(x_missing,return_inverse=True)
                     
                     if ((self.missing_strategy == 'worst_bin' and trend == 'pos')
@@ -411,14 +400,14 @@ class TIDE:
             idx_bounds = []
             best_cand = None
             idx_base = 0
-            idx_max = x_unique.shape[0]
+            idx_max = x_unique.shape[0] - 1
 
             if trend == 'pos':
                 er_previous = np.zeros(shape=per_unique.shape)
             else:
                 er_previous = np.ones(shape=per_unique.shape) + self.min_er_delta
 
-            # Main cycle
+            # Cycle for continuous values
             while idx_base <= idx_max:
 
                 # Calculate cumulative event rate for every period
@@ -431,17 +420,17 @@ class TIDE:
                 else:
                     er_right_window = np.maximum.accumulate(er_cumul[::-1],axis=0)[::-1]
 
-                # Choose candidate points that ensures all the conditions for continuous part are met:
+                # Choose candidate points that ensure all the conditions for continuous part are met:
                 # Monotonicity for every period
                 cand_monotone = np.all(er_cumul == er_right_window, axis=1)
 
                 # Candidate bin has equal or more than min_sample_rate * 100% observations out of total
                 cand_binsize = np.all((ct[idx_base:, 1::3].cumsum(axis=0) /
-                                    (self._epsilon + per_size)) >= self.min_sample_rate, axis=1)
+                                      (self._epsilon + per_size)) >= self.min_sample_rate, axis=1)
 
                 # Every class is present with at least n=min_class_obs observations
                 cand_classprecense = np.all(ct[idx_base:, 2::3].cumsum(axis=0) >= self.min_class_obs, axis=1) \
-                                    & np.all(ct[idx_base:, 3::3].cumsum(axis=0) >= self.min_class_obs, axis=1)
+                                     & np.all(ct[idx_base:, 3::3].cumsum(axis=0) >= self.min_class_obs, axis=1)
                 
                 # New bin eventrate is higher (or lower, according to trend) by k% than previous one
                 if trend == 'pos':
@@ -456,53 +445,60 @@ class TIDE:
                     cand_nonmissing = np.tile(True,ct[idx_base:].shape[0])
                 
                 # Choose candidate point
-                best_cand = np.argmax(np.all((cand_monotone,
-                                              cand_binsize,
-                                              cand_classprecense,
-                                              cand_erdelta,
-                                              cand_nonmissing),axis=0))
-
-                # Accept candidate point, if the remaining space satisfies the conditions
-                # of min_sample_rate, min_class_obs and er_delta
-                if ct[idx_base+best_cand:].shape[0] > 0:
-
-                    flag_remaining_binsize = np.any(np.all((ct[idx_base + best_cand:, 1::3].cumsum(axis=0) /
-                                                            (self._epsilon
-                                                             + ct[:, 1::3].sum(axis=0)))
-                                                            >= self.min_sample_rate,
-                                                           axis=1))
-                    flag_remaining_classprecense = np.any(np.all(ct[idx_base+best_cand:, 2::3].cumsum(axis=0)
-                                                                 >= self.min_class_obs, axis=1) \
-                                                          & np.all(ct[idx_base+best_cand:, 3::3].cumsum(axis=0)
-                                                                   >= self.min_class_obs, axis=1))
-
-                    if trend == 'pos':
-                        flag_remaining_erdelta = np.all((ct[idx_base+best_cand:, 2::3].sum(axis=0) /
-                                                         (self._epsilon
-                                                          + ct[idx_base+best_cand:, 1::3].sum(axis=0)))
-                                                        >= er_cumul[best_cand] + self.min_er_delta)
-                    else:
-                        flag_remaining_erdelta = np.all((ct[idx_base+best_cand:, 2::3].sum(axis=0) /
-                                                         (self._epsilon
-                                                          + ct[idx_base+best_cand:, 1::3].sum(axis=0)))
-                                                        <= er_cumul[best_cand] - self.min_er_delta)
-
+                cand_allchecks = np.all((cand_monotone,
+                                         cand_binsize,
+                                         cand_classprecense,
+                                         cand_erdelta,
+                                         cand_nonmissing),
+                                        axis=0)
+                print('idx_base',idx_base)
+                if cand_allchecks.max() == False:
+                    print('No candidate points found')
+                    break #No candidates found, quit cycle
                 else:
-                    flag_remaining_binsize = False
-                    flag_remaining_classprecense = False
-                    flag_remaining_erdelta = False
-
+                    best_cand = np.argmax(cand_allchecks)
+                # Accept point if remaining space satisfies the conditions
+                idx_base_rem = idx_base + best_cand + 1
+                if idx_base_rem >= ct.shape[0]:
+                    print('no shape remaining')
+                    print(idx_base,x_unique[idx_base])
+                    print(idx_base + best_cand,x_unique[idx_base + best_cand])
+                    print(idx_base + best_cand + 1,x_unique[idx_base + best_cand + 1])
+                    break
+                
+                flag_rem_binsize = np.any(np.all((ct[idx_base_rem:, 1::3].cumsum(axis=0) /
+                                                 (self._epsilon + per_size))
+                                                 >= self.min_sample_rate,
+                                                 axis=1))
+                
+                flag_rem_classprecense = np.any(np.all(ct[idx_base_rem:, 2::3].cumsum(axis=0)
+                                                       >= self.min_class_obs, axis=1) \
+                                                & np.all(ct[idx_base_rem:, 3::3].cumsum(axis=0)
+                                                       >= self.min_class_obs, axis=1))
+                
+                if trend == 'pos':
+                    flag_rem_erdelta = np.all((ct[idx_base_rem:, 2::3].sum(axis=0) /
+                                                         (self._epsilon
+                                                          + ct[idx_base_rem:, 1::3].sum(axis=0)))
+                                                        >= er_cumul[best_cand] + self.min_er_delta)
+                else:
+                    flag_rem_erdelta = np.all((ct[idx_base_rem:, 2::3].sum(axis=0) /
+                                                         (self._epsilon
+                                                          + ct[idx_base_rem:, 1::3].sum(axis=0)))
+                                                        <= er_cumul[best_cand] - self.min_er_delta)
+                print('Save point if all true',{'flag_rem_binsize':flag_rem_binsize, 'flag_rem_classprecense':flag_rem_classprecense, 'flag_rem_erdelta':flag_rem_erdelta})
                 # Save point and update base index 
-                if all((best_cand, flag_remaining_binsize, flag_remaining_classprecense, flag_remaining_erdelta)):
-                    idx_bounds.append(idx_base+best_cand)
-                    er_previous = er_cumul[best_cand]
+                if all((flag_rem_binsize, flag_rem_classprecense, flag_rem_erdelta)):
                     if trend == 'pos':
-                        idx_base += best_cand
+                        idx_bounds.append(idx_base+best_cand+1)
                     else:
-                        idx_base += best_cand + 1
+                        idx_bounds.append(idx_base+best_cand)
+                    print('point saved',idx_bounds,x_unique[idx_bounds])
+                    er_previous = er_cumul[best_cand]
+                    idx_base += best_cand + 1
                 else: #Quit main cycle
                     break
-            
+
             # Create bins
             if self.min_bound == 'col_min':
                 min_bound = x_cont_unique.min() - self._epsilon
@@ -513,7 +509,15 @@ class TIDE:
             else:
                 max_bound = self.max_bound
 
-            cont_bounds = np.r_[min_bound, x_unique[idx_bounds], max_bound]
+            mid_bounds = x_unique[idx_bounds]
+
+            if len(mid_bounds)>0 and trend == 'pos' and mid_bounds[0] == x_unique[0]:
+                mid_bounds = mid_bounds[1:]
+            if len(mid_bounds)>0 and trend == 'neg' and mid_bounds[-1] == x_unique[-1]:
+                mid_bounds = mid_bounds[:-1]
+
+            cont_bounds = np.r_[min_bound, mid_bounds, max_bound]
+            print('resulting bounds', cont_bounds)
 
         # Compose final bins
         bins_map = {'trend':trend, 'bins':dict()}
@@ -652,7 +656,6 @@ class TIDE:
                          self._epsilon)
 
 
-
     def fit(self,X,y,per,reset=True,return_bins=False,disable_tqdm=False):
         '''
         Fit one or many variables
@@ -703,7 +706,6 @@ class TIDE:
         if return_bins:
             return self.exog_bins
         
-
 
     def _transform_single(self,x,xname,handle_unknown):
         '''Transform single variable'''
@@ -774,7 +776,6 @@ class TIDE:
             warnings.warn(f'There are values in variable "{xname}" that are not covered by fitted bins and treated as "{handle_unknown}" by WoE.')
 
         return x_woe
-
 
 
     def transform(self, X, xnames=None, handle_unknown='keep'):
@@ -850,11 +851,10 @@ class TIDE:
             return np.array(transformed).T
 
 
-
-    def fit_transform(self,X,y,per,reset=True,return_bins=False):
+    def fit_transform(self, X, y, per, xnames=None, reset=True, return_bins=False, disable_tqdm=False, handle_unknown='keep'):
         '''Scikit-learn style fit and transform of one or many variables'''
-        self.fit(X,y,per,reset,return_bins)
-        transformed = self.transform(X)
+        self.fit(X=X,y=y,per=per,reset=reset,return_bins=return_bins,disable_tqdm=disable_tqdm)
+        transformed = self.transform(X=X,xnames=xnames,handle_unknown=handle_unknown)
         return transformed
     
 
@@ -952,7 +952,6 @@ class TIDE:
                                            ignore_index=True,
                                            axis=0).reset_index(drop=True)
             
-
 
     def plot(self,xnames = [],figsize=(15,6),dpi=120):
         '''Matplotlib plot for variable binning results'''

@@ -19,7 +19,7 @@ The algorithm features:
 - ...and more!
 
 ## Installation
-Download .tar.gz to your local machine from [Latest Release Page](https://github.com/leonidgarin/TIDE/releases/latest), then 'pip install <path to package>.tar.gz' using terminal.
+Download .tar.gz to your local machine from [Latest Release Page](https://github.com/leonidgarin/TIDE/releases/latest), then `pip install tide-<version>.tar.gz` using terminal.
 
 ## Quick start
 - Basic usage
