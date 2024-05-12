@@ -16,8 +16,8 @@ def calc_eventrates(x,
                     y,
                     composed_bins,
                     idx_cont=None,
-                    round_brackets='right',
-                    epsilon=1e-6,
+                    round_brackets='left',
+                    epsilon=1e-8,
                     return_counts=False):
     '''
     Calculates rate of occurence of positive observations in each composed bin
@@ -54,7 +54,7 @@ def calc_eventrates(x,
         Indicates to return the numerators and denominators
         of event rates
     
-    epsilon : float > 0, default=1e-6
+    epsilon : float > 0, default=1e-8
         Small value that is used for safe math
 
     Returns
@@ -122,8 +122,8 @@ def calc_WoEs(x,
               y,
               composed_bins,
               idx_cont=None,
-              round_brackets='right',
-              epsilon=1e-6):
+              round_brackets='left',
+              epsilon=1e-8):
     '''
     Calculates Weight of Evidence for every composed bin
     WoE = ln(%nonevents/%events)
@@ -158,7 +158,7 @@ def calc_WoEs(x,
         For example, if min bound is 1, the adjusted should be 1 - 1e-6;
         if max bound is 10, the adjusted should be 10 + 1e-6.
     
-    epsilon : float > 0, default=1e-6
+    epsilon : float > 0, default=1e-8
         Small value that is used for safe math
 
     Returns
@@ -229,8 +229,8 @@ def calc_IVs(x,
              y,
              composed_bins,
              idx_cont=None,
-             round_brackets='right',
-             epsilon=1e-6):
+             round_brackets='left',
+             epsilon=1e-8):
     '''
     Calculates Information Value
     IV = sum((%nonevents - %events) * ln(%nonevents / %events))
@@ -265,7 +265,7 @@ def calc_IVs(x,
         For example, if min bound is 1, the adjusted should be 1 - 1e-6;
         if max bound is 10, the adjusted should be 10 + 1e-6.
     
-    epsilon : float > 0, default=1e-6
+    epsilon : float > 0, default=1e-8
         Small value that is used for safe math
 
     Returns
@@ -339,9 +339,9 @@ def calc_PSIs(x,
               per,
               composed_bins,
               idx_cont=None,
-              round_brackets='right',
+              round_brackets='left',
               how = 'sequential',
-              epsilon=1e-6):
+              epsilon=1e-8):
     ''' 
     Calculates Population Stability Index:
     PSI = sum((%bin_t0 - %bin_t1) * ln(%bin_t0 - %bin_t1))
@@ -386,7 +386,7 @@ def calc_PSIs(x,
         sequential - compare period by period,
         on_base - compare all periods with the first one
     
-    epsilon : float > 0, default=1e-6
+    epsilon : float > 0, default=1e-8
         Small value that is used for safe math
 
     Returns

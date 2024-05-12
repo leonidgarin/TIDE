@@ -1,14 +1,30 @@
 '''
 TIDE - Time Invariant Discretization Engine
 
-Leonid Garin, 2023
+Leonid Garin, 2024
+
+Current version: 0.5.0
+
+Changes from previous version:
+- Fixed bug with incorrect behaviour in TIDE algorithm: if candidate point was idx_base, it was skipped.
+- Changed logic for point selection and brackets.
+Now for positive trend we use the candidate point (idx_cand) and (a,b] brackets; for negative - idx_cand+1 and [a,b) brackets
+- Changed text brackets for -inf, +inf borders to always be '(' or ')'
+- Visual improvements for plots 
+- Added sample_rate in stats for convenience
+- Rewrited some docs
+- Added 'tide' mode for categorical bins handling
 
 TODO:
-- fix visual representation of bin brackets
+- fix visual representation of continuous finite bin brackets
 - add multiprocessing to bins calculation
 - write more tests
 - mandatory missing as worst/best when no missing values in column (add parameter)
 - cover case when cont bin contains only one unique value
+- add more filters to chi-merge
+- optimize chimerge cycle
+- optimize tide cycle for categorical bins
+- cover case when tide merges two continuous bins like (0,10],(10,100], must remove 10 in between ad make it one bin
 '''
 
 import warnings
@@ -55,19 +71,20 @@ class TIDE:
         treated as continuous part, while strings as categorical;
         some strings as missing values.
 
-        TIDE provides and guarantees the following restrictions for bins:
-        - The trend of event rate in each subsequent bin
+        TIDE provides and guarantees* the following restrictions for bins:
+        - P1. The trend of event rate in each subsequent bin
         must be monotonical (positive or negative);
-        - This trend must remain the same on different time
+        - P2. This trend must remain the same on different time
         intervals within the training data;
-        - A bin must be at least 5%* size of total data
+        - P3. A bin must be at least 5%** size of total data
         observations;
-        - A bin must contain at least 1* observation of
+        - P4. A bin must contain at least 1** observation of
         both classes;
-        - Missing values must be taken into account: placed in
+        - P5. Missing values must be taken into account: placed in
         separate bin if there are sufficient cases, or joined
         to some other bin (the "worst" / the "best").
-        * values can be adjusted.
+        * see docs for missing_strategy to find exceptions
+        ** values can be adjusted.
 
         Attributes
         __________
@@ -112,7 +129,6 @@ class TIDE:
             lowest event rate in case when missing_rate is lower than specified.
 
         missing_rate : float (0.0 < float < 1.0) (default = 0.05)
-            (Not implemented yet)
             If missing_rate is higher (>=) than specified,
             the algorithm will create a separate bin for missings.
             Else, the algorithm will create composed bin according to chosen strategy.
@@ -123,14 +139,27 @@ class TIDE:
 
         cat_strategy : {'separate_bin','chi-squared','tide'} (default = 'separate_bin')
             This option specifies how the algorithm handles the
-            categorical bins. Note that these strategies will not
-            ensure stability of categorical bins over time.
-            If 'separate_bin', then they will be kept as is.
+            categorical bins. See Table 1 below that describes which principles
+            of good binning are guaranteed by each strategy.
+            If 'separate_bin', then categorical bins will be kept as is.
             If 'chi-squared', then the algorithm will loop merge categorical bins
-            using chi-squared test (see ChiMerge by R.Kerber, 1992).
+            using chi-squared test (see ChiMerge by R.Kerber, 1992) until p-value condition is met
+                (TODO: add more filters as stopping criteria: min_sample_rate, min_class_obs)
             If 'tide', then algorithm will loop merge categorical and continuous bins
-            using square distance between event rate curves until no curve intersections
-            present. Note: If one wants to include missings to achieve time stability
+            using square distance between event rate curves until all conditions met.
+            Note for 'tide': If one wants to include missings to achieve full time stability, then
+            use missing_strategy = 'worst_bin' (or 'best_bin') and missing_rate = 1.0.
+            Table 1.
+            +------------+--+--+--+--+--+
+            |Strategy    |P1|P2|P3|P4|P5|
+            +------------+--+--+--+--+--+
+            |separate_bin|● |● |● |● |⋆ |
+            |chi-squared |● |● |● |● |⋆ |
+            |tide        |○ |⋆ |⋆ |⋆ |⋆ |
+            +------------+--+--+--+--+--+
+            ⋆ - guaranteed for continuous and categorical parts
+            ● - guaranteed for continuous part only
+            ○ - not guaranteed, but highly likely to be complied with
 
         alpha_significance : float, (0.0 < float < 0.5, default = 0.05)
             The specified threshold for p-value to reject
@@ -156,7 +185,7 @@ class TIDE:
             Matplotlib plot for variable binning results
         '''
         # Constants
-        self._epsilon = 1e-6
+        self._epsilon = 1e-8
 
         self._acceptable_types_cont = (int,np.int8,np.int16,np.int32,np.int64,
                                         float,np.float16,np.float32,np.float64)
@@ -349,7 +378,7 @@ class TIDE:
                                                          return_inverse=True)  # According to the NumPy docs
                                                                                # (see https://numpy.org/doc/stable/reference/generated/numpy.unique.html),
                                                                                # the np.unique function also sorts x in ascending order
-            x_unique = x_cont_unique #?
+            x_unique = x_cont_unique
             idx_x_unique = idx_x_cont_unique
             per_x = per_cont
             y_x = y_cont
@@ -451,53 +480,38 @@ class TIDE:
                                          cand_erdelta,
                                          cand_nonmissing),
                                         axis=0)
-                print('idx_base',idx_base)
                 if cand_allchecks.max() == False:
-                    print('No candidate points found')
                     break #No candidates found, quit cycle
-                else:
-                    best_cand = np.argmax(cand_allchecks)
-                # Accept point if remaining space satisfies the conditions
-                idx_base_rem = idx_base + best_cand + 1
-                if idx_base_rem >= ct.shape[0]:
-                    print('no shape remaining')
-                    print(idx_base,x_unique[idx_base])
-                    print(idx_base + best_cand,x_unique[idx_base + best_cand])
-                    print(idx_base + best_cand + 1,x_unique[idx_base + best_cand + 1])
-                    break
-                
-                flag_rem_binsize = np.any(np.all((ct[idx_base_rem:, 1::3].cumsum(axis=0) /
-                                                 (self._epsilon + per_size))
-                                                 >= self.min_sample_rate,
-                                                 axis=1))
-                
-                flag_rem_classprecense = np.any(np.all(ct[idx_base_rem:, 2::3].cumsum(axis=0)
-                                                       >= self.min_class_obs, axis=1) \
-                                                & np.all(ct[idx_base_rem:, 3::3].cumsum(axis=0)
-                                                       >= self.min_class_obs, axis=1))
-                
+
+                best_cand = np.argmax(cand_allchecks)
+
+                if idx_base + best_cand == idx_max:
+                    break #There is no need to add last point to splits because there is no space left
+
+                # Check remaining space
+                idx_remspace = idx_base + best_cand + 1
+                flag_rem_binsize = np.all((ct[idx_remspace:, 1::3].cumsum(axis=0) /
+                                          (self._epsilon + per_size)) >= self.min_sample_rate, axis=1).any()
+                flag_rem_classprecense = (np.all(ct[idx_remspace:, 2::3].cumsum(axis=0) >= self.min_class_obs, axis=1) \
+                                               & np.all(ct[idx_remspace:, 3::3].cumsum(axis=0) >= self.min_class_obs, axis=1)).any()
                 if trend == 'pos':
-                    flag_rem_erdelta = np.all((ct[idx_base_rem:, 2::3].sum(axis=0) /
-                                                         (self._epsilon
-                                                          + ct[idx_base_rem:, 1::3].sum(axis=0)))
-                                                        >= er_cumul[best_cand] + self.min_er_delta)
+                    flag_rem_erdelta = np.all((ct[idx_remspace:, 2::3].cumsum(axis=0) / (self._epsilon
+                                                                 + ct[idx_remspace:, 1::3].cumsum(axis=0))) >= (er_previous + self.min_er_delta), axis = 1).any()
                 else:
-                    flag_rem_erdelta = np.all((ct[idx_base_rem:, 2::3].sum(axis=0) /
-                                                         (self._epsilon
-                                                          + ct[idx_base_rem:, 1::3].sum(axis=0)))
-                                                        <= er_cumul[best_cand] - self.min_er_delta)
-                print('Save point if all true',{'flag_rem_binsize':flag_rem_binsize, 'flag_rem_classprecense':flag_rem_classprecense, 'flag_rem_erdelta':flag_rem_erdelta})
-                # Save point and update base index 
-                if all((flag_rem_binsize, flag_rem_classprecense, flag_rem_erdelta)):
-                    if trend == 'pos':
-                        idx_bounds.append(idx_base+best_cand+1)
-                    else:
-                        idx_bounds.append(idx_base+best_cand)
-                    print('point saved',idx_bounds,x_unique[idx_bounds])
-                    er_previous = er_cumul[best_cand]
-                    idx_base += best_cand + 1
-                else: #Quit main cycle
-                    break
+                    flag_rem_erdelta = np.all((ct[idx_remspace:, 2::3].cumsum(axis=0) / (self._epsilon
+                                                                 + ct[idx_remspace:, 1::3].cumsum(axis=0))) <= (er_previous - self.min_er_delta), axis = 1).any()
+                
+                if not (flag_rem_binsize & flag_rem_classprecense & flag_rem_erdelta):
+                    break #Remaining space did not pass filters, so the candidate point can't be used and there is no chance for another candidate point to appear
+
+                # Save point
+                if trend == 'pos':
+                    idx_bounds.append(idx_base + best_cand)
+                else:
+                    idx_bounds.append(idx_base + best_cand + 1)
+
+                er_previous = er_cumul[best_cand]
+                idx_base += best_cand + 1
 
             # Create bins
             if self.min_bound == 'col_min':
@@ -511,13 +525,7 @@ class TIDE:
 
             mid_bounds = x_unique[idx_bounds]
 
-            if len(mid_bounds)>0 and trend == 'pos' and mid_bounds[0] == x_unique[0]:
-                mid_bounds = mid_bounds[1:]
-            if len(mid_bounds)>0 and trend == 'neg' and mid_bounds[-1] == x_unique[-1]:
-                mid_bounds = mid_bounds[:-1]
-
-            cont_bounds = np.r_[min_bound, mid_bounds, max_bound]
-            print('resulting bounds', cont_bounds)
+            cont_bounds = np.unique(np.r_[min_bound, mid_bounds, max_bound])
 
         # Compose final bins
         bins_map = {'trend':trend, 'bins':dict()}
@@ -553,7 +561,7 @@ class TIDE:
         elif self.cat_strategy == 'chi-squared':
 
             if len(bins_cat) >= 100:
-                warnings.warn(f'Column {xname} has {len(bins_cat)} unique categorical values.\nChi-merge for categorical values has O(n^2) complexity, so performance may be poor')
+                warnings.warn(f'Column {xname} has {len(bins_cat)} unique categorical values. Chi-merge for categorical values has O(n^2) complexity, so performance may be poor')
 
             if len(bins_cat) > 0:
                 bins_chi = [(i,) for i in bins_cat]
@@ -616,7 +624,7 @@ class TIDE:
                         if bin_i == new_bin or frozenset((bin_i,new_bin)) in pvalue_map.keys():
                             continue
 
-                        n_i_0 = (y[np.isin(x,bin_i)]==0).sum()
+                        n_i_0 = (y[np.isin(x,bin_i)]==0).sum() #! This costs a lot of time, next time save those values in some updatable map and reuse them
                         n_i_1 = (y[np.isin(x,bin_i)]==1).sum()
                         n_j_0 = (y[np.isin(x,new_bin)]==0).sum()
                         n_j_1 = (y[np.isin(x,new_bin)]==1).sum()
@@ -638,6 +646,115 @@ class TIDE:
                         bins_map['bins']['cat'][b] = idx
                     idx += 1
 
+        elif self.cat_strategy == 'tide':
+            #Add each categorical bin separately
+            for val in bins_cat:
+                bins_map['bins']['cat'] = bins_map['bins'].get('cat',dict())
+                bins_map['bins']['cat'][val] = idx
+                idx += 1
+
+            while True:
+                #Eventrates, events, totals, sample rates calculation
+                bins = self._compose_bins(bins_map)['bins']
+                eventrates = []
+                events = []
+                nonevents = []
+                totals = []
+                for per in per_unique:
+                    eventrates_per, events_per, totals_per = calc_eventrates(x_arr[per_arr==per],
+                                                                             y_arr[per_arr==per],
+                                                                             bins,
+                                                                             idx_cont[per_arr==per],
+                                                                             'left' if trend =='pos' else 'right',
+                                                                             return_counts=True)
+                    eventrates.append(eventrates_per)
+                    events.append(events_per)
+                    nonevents.append(totals_per - events_per)
+                    totals.append(totals_per)
+                eventrates_map = {k:v for k,v in zip(bins.keys(),np.array(eventrates).T)}
+                events_map = {k:v for k,v in zip(bins.keys(),np.array(events).T)}
+                nonevents_map = {k:v for k,v in zip(bins.keys(),np.array(nonevents).T)}
+                totals_map = {k:v for k,v in zip(bins.keys(),np.array(totals).T.sum(axis=1))}
+                sample_rate_map = {k:v for k,v in zip(bins.keys(),np.array(totals).T / np.array(totals).T.sum(axis=0))}
+
+
+                #ER curves crossings and deltas calculation
+                er_crossing_pairs = dict()
+                er_delta_pairs = dict()
+                for idx_bin_i, er_i  in eventrates_map.items():
+                    for idx_bin_j, er_j in eventrates_map.items():
+                        if (idx_bin_i == idx_bin_j) or frozenset((idx_bin_i,idx_bin_j)) in er_crossing_pairs.keys():
+                            continue
+                        d = np.sign(er_i - er_j)
+                        er_crossing_pairs[frozenset((idx_bin_i,idx_bin_j))] = (1 - np.equal(d[:-1],d[1:])).sum()
+                        er_delta_pairs[frozenset((idx_bin_i,idx_bin_j))] = np.abs(er_i - er_j).min()
+
+
+                #ER curves crossings and delta for each bin
+                er_crossings_map = dict()
+                er_delta_map = dict()
+                for idx_bin in bins.keys():
+                    n_crossings = 0
+                    for key,val in er_crossing_pairs.items():
+                        if idx_bin in key:
+                            n_crossings += val
+                    er_crossings_map[idx_bin] = n_crossings
+                    er_deltas = []
+                    for key,val in er_delta_pairs.items():
+                        if idx_bin in key:
+                            er_deltas.append(val)
+                    er_delta_map[idx_bin] = min(er_deltas) if er_deltas else np.inf
+
+
+                
+                #Find bin that does not satisfy conditions according to priority (if many, choose first smallest by number of observations):
+                # 1. Stability over time - no crossings of eventrate curve allowed
+                # 2. Minimum event rate delta between two bins in each period must be >= min_er_delta
+                # 3. Bin size at least min_sample_rate * 100 % in each period
+                # 4. Minimum observations of each class at least min_class_obs
+                
+                max_crossings_fact = max(er_crossings_map.values())
+                min_er_delta_fact = min(er_delta_map.values())
+                min_sample_rate_fact = min(i.min() for i in sample_rate_map.values())
+                min_events_fact = min(i.min() for i in events_map.values())
+                min_nonevents_fact = min(i.min() for i in nonevents_map.values())
+
+                if max_crossings_fact > 0:
+                    idx_bin_tomerge = min([k for k in er_crossings_map.keys() if er_crossings_map[k] == max_crossings_fact], key = lambda x: totals_map[x])
+
+                elif min_er_delta_fact < self.min_er_delta:
+                    idx_bin_tomerge = min([k for k in er_delta_map.keys() if er_delta_map[k] == min_er_delta_fact], key = lambda x: totals_map[x])
+
+                elif min_sample_rate_fact < self.min_sample_rate:
+                    idx_bin_tomerge = min([k for k in sample_rate_map.keys() if sample_rate_map[k].min() == min_sample_rate_fact], key = lambda x: totals_map[x])
+
+                elif min_events_fact < self.min_class_obs:
+                    idx_bin_tomerge = min([k for k in events_map.keys() if events_map[k].min() == min_events_fact], key = lambda x: totals_map[x])
+
+                elif min_nonevents_fact < self.min_class_obs:
+                    idx_bin_tomerge = min([k for k in nonevents_map.keys() if nonevents_map[k].min() == min_nonevents_fact], key = lambda x: totals_map[x])
+
+                else:
+                    break # All conditions met
+
+                #Calculate closest bin using square distance of eventrates
+                idx_bin_closest = -1
+                min_distance = np.inf
+                for idx_bin in bins.keys():
+                    if idx_bin == idx_bin_tomerge:
+                        continue
+                    distance = ((eventrates_map[idx_bin_tomerge] - eventrates_map[idx_bin]) ** 2).sum()
+                    if distance < min_distance:
+                        min_distance = distance
+                        idx_bin_closest = idx_bin
+
+                #Combine bins by replacing indexes
+                for bin_type in bins_map['bins']:
+                    for bin_i, idx_bin_i in bins_map['bins'][bin_type].items():
+                        if idx_bin_i == idx_bin_closest:
+                            bins_map['bins'][bin_type][bin_i] = idx_bin_tomerge
+
+
         #missing
         if not included_missing:
             for val in np.unique(x_missing):
@@ -652,13 +769,12 @@ class TIDE:
                          y_arr,
                          per_arr,
                          xname,
-                         idx_cont,
-                         self._epsilon)
+                         idx_cont)
 
 
     def fit(self,X,y,per,reset=True,return_bins=False,disable_tqdm=False):
         '''
-        Fit one or many variables
+        Fit bins for one or many variables
 
         Arguments
         _________
@@ -674,12 +790,18 @@ class TIDE:
             Array of string values that indicate observation time period.
             Note that observations must not contain nan or inf values.
 
-        reset : bool
+        reset : bool (default=True)
             TIDE stores fitted bins. If reset = True, then the storage will
             be emptied when fit() is called. Else, it will store
             existing variables, add new ones during the fitting process.
             Note that if new variable has the same name as existing one,
             the latter will be overwrited.
+
+        return_bins : bool (default=False)
+            Returns fitted bins if True.
+
+        disable_tqdm : bool (default=True)
+            Disables TQDM progress bar if True.
         '''
         assert isinstance(X,pd.DataFrame)
         assert y.sum() > 0 and y.shape[0] - y.sum() > 0
@@ -711,7 +833,7 @@ class TIDE:
         '''Transform single variable'''
         composed_bins = self.exog_bins[xname]
         woes = self.exog_woes[xname]
-        round_brackets = 'right' if composed_bins['trend'] =='pos' else 'left'
+        round_brackets = 'left' if composed_bins['trend'] =='pos' else 'right'
 
         # Split x into continuous, discrete and missing parts
         idx_cont, idx_cat, idx_missing = self.idx_from_mixed(x)
@@ -725,11 +847,8 @@ class TIDE:
                 if bintype == 'cont':
                     if round_brackets == 'right':
                         idx_bin = (x[idx_cont] >= b[0]) & (x[idx_cont] < b[1])
-                    elif round_brackets == 'left':
-                        idx_bin = (x[idx_cont] > b[0]) & (x[idx_cont] <= b[1])
-                    else:
-                        raise ValueError('Round brackets can be only "left" or "right"')
-                    
+                    else: #round_brackets == 'left'
+                        idx_bin = (x[idx_cont] > b[0]) & (x[idx_cont] <= b[1])                    
                     x_woe[idx_cont] = np.where(idx_bin, woe_i, x_woe[idx_cont])
                     
                 elif bintype in ('cat','missing'):
@@ -780,7 +899,7 @@ class TIDE:
 
     def transform(self, X, xnames=None, handle_unknown='keep'):
         '''
-        Transform variable using previously calculated bins
+        Transform variables using previously calculated bins
         Arguments
         _________
         X : pd.DataFrame | pd.Series | np.array
@@ -823,7 +942,7 @@ class TIDE:
             return df_transformed
         
         # Series
-        if isinstance(X, pd.Series):
+        elif isinstance(X, pd.Series):
             name = X.name
             # Check
             if not name in self.exog_bins.keys():
@@ -832,7 +951,8 @@ class TIDE:
             # Transform
             return pd.Series(self._transform_single(X,name,handle_unknown), name=f'{name}_woe')
         
-        if isinstance(X,np.ndarray):
+        # Arrays
+        elif isinstance(X,np.ndarray):
             transformed = []
             # Check
             if len(X.shape) !=2:
@@ -848,11 +968,13 @@ class TIDE:
             for i,name in enumerate(xnames):
                 x = X[::,i]
                 transformed.append(self._transform_single(x,name,handle_unknown))
-            return np.array(transformed).T
+            return np.array(transformed).T 
+        else:
+            raise TypeError(f'Type {type(X)} is not supported. Use pd.DataFrame, pd.Series or np.ndarray instead')
 
 
     def fit_transform(self, X, y, per, xnames=None, reset=True, return_bins=False, disable_tqdm=False, handle_unknown='keep'):
-        '''Scikit-learn style fit and transform of one or many variables'''
+        '''Scikit-learn style fit and transform of one or many variables. See docs in .fit, .transform'''
         self.fit(X=X,y=y,per=per,reset=reset,return_bins=return_bins,disable_tqdm=disable_tqdm)
         transformed = self.transform(X=X,xnames=xnames,handle_unknown=handle_unknown)
         return transformed
@@ -863,15 +985,14 @@ class TIDE:
                     y,
                     per,
                     xname,
-                    idx_cont = None,
-                    epsilon = 1e-6):
+                    idx_cont = None):
         '''Calculates some stats and stores them in DataFrame'''
 
         # Get bins
         composed_bins = self.exog_bins[xname]
         n_bins = len(composed_bins['bins'])
         trend = composed_bins['trend']
-        round_brackets = 'right' if trend == 'pos' else 'left'
+        round_brackets = 'left' if trend == 'pos' else 'right'
 
         # Create string representation for bins
         composed_bins_str = []
@@ -879,10 +1000,16 @@ class TIDE:
             bin_str = []
             for b, bintype in atomic_bins.items():
                 if bintype == 'cont':
-                    if trend == 'pos':
-                        bin_str.append(f'[{b[0]:.4f},{b[1]:.4f})')
-                    else:
-                        bin_str.append(f'({b[0]:.4f},{b[1]:.4f}]')
+                    if round_brackets == 'right':
+                        if b[0] == -np.inf:
+                            bin_str.append(f'({b[0]:.4f},{b[1]:.4f})')
+                        else:
+                            bin_str.append(f'[{b[0]:.4f},{b[1]:.4f})')
+                    else: #left
+                        if b[1] == np.inf:
+                            bin_str.append(f'({b[0]:.4f},{b[1]:.4f})')
+                        else:
+                            bin_str.append(f'({b[0]:.4f},{b[1]:.4f}]')
                 elif bintype in ('cat','missing'):
                     bin_str.append(b)
                 else:
@@ -896,6 +1023,7 @@ class TIDE:
                                                      idx_cont,
                                                      round_brackets,
                                                      return_counts=True)
+        sample_rate = totals / (self._epsilon + totals.sum())
         WoEs = calc_WoEs(x,y,composed_bins['bins'],idx_cont,round_brackets)
         IVs = calc_IVs(x,y,composed_bins['bins'],idx_cont,round_brackets)
         IV = np.nansum(IVs)
@@ -908,6 +1036,7 @@ class TIDE:
                                 'trend':[trend]*n_bins,
                                 'bin':composed_bins_str,
                                 'n_obs':totals,
+                                'sample_rate':sample_rate,
                                 'n_events':events,
                                 'event_rate':eventrates,
                                 'WoE':WoEs,
@@ -934,12 +1063,13 @@ class TIDE:
                                                          idx_cont[per==p],
                                                          round_brackets,
                                                          return_counts=True)
-            
+            sample_rate = totals / (self._epsilon + totals.sum())
             stats_per_i = pd.DataFrame({'period':[p] * n_bins,
                                         'variable':[xname] * n_bins,
                                         'trend':[trend] * n_bins,
                                         'bin':composed_bins_str,
                                         'n_obs':totals,
+                                        'sample_rate':sample_rate,
                                         'n_events':events,
                                         'event_rate':eventrates,
                                         'PSI_seq':[PSI_seq] * n_bins,
@@ -953,14 +1083,13 @@ class TIDE:
                                            axis=0).reset_index(drop=True)
             
 
-    def plot(self,xnames = [],figsize=(15,6),dpi=120):
+    def plot(self,xnames = [],figsize=(15,6),dpi=120,psi_border=0.35):
         '''Matplotlib plot for variable binning results'''
         for name in xnames:
             if not name in self.exog_bins.keys():
                 raise ValueError(f'Feature "{name}" not found in exog_bins')
         for name in xnames:
             stats_i = self.stats[self.stats['variable']==name].copy().reset_index(drop=True)
-            stats_i['n_obs%'] = stats_i['n_obs'] / stats_i['n_obs'].sum()
 
             plt.rc('font', size=8)
             fig, ax = plt.subplots(1,3, figsize=figsize,dpi=dpi)
@@ -969,9 +1098,9 @@ class TIDE:
 
             # Result of binning on all periods
             ax[0].set_title('Bin stats')
-            ax[0].bar(stats_i['bin'],stats_i['n_obs'],label='n_obs',color='lightblue')
+            ax[0].bar(stats_i['bin'],stats_i['n_obs'],label='n_obs(%total)',color='lightblue')
             for i,row in stats_i.iterrows():
-                ax[0].annotate(row['n_obs'],(i,row['n_obs']/2),ha='center',va='center')
+                ax[0].annotate(f"{row['n_obs']}\n({row['sample_rate']:.1%})",(i,row['n_obs']/2),ha='center',va='center',rotation=90,color='steelblue')
 
             ax[0].set_xticks(stats_i['bin'])
             ax[0].set_xticklabels(stats_i['bin'],rotation=90)
@@ -979,10 +1108,12 @@ class TIDE:
             ax[0].set_ylabel('Bin size')
 
             ax_0_1 = ax[0].twinx()
-            ax_0_1.plot(stats_i['bin'],stats_i['event_rate'],label='event_rate',color='darkblue',marker='.')
+            ax_0_1.plot(stats_i['bin'],stats_i['event_rate'],label='event_rate',color='darkblue',alpha=0.5,marker='.')
             for i,row in stats_i.iterrows():
-                ax_0_1.annotate(f'{row["event_rate"]:.4f}',(i,row['event_rate']),ha='center')
+                ax_0_1.annotate(f'{row["event_rate"]:.2%}',(i,row['event_rate']),ha='center',alpha=0.5)
             ax_0_1.set_ylabel('Event rate')
+            ax_0_1.set_yticks(ax_0_1.get_yticks(),ax_0_1.get_yticks()) #if remove this, there will be UserWarning because yticks not fixed
+            ax_0_1.set_yticklabels([f'{i:.2%}' for i in ax_0_1.get_yticks()])
 
             lines, labels = ax[0].get_legend_handles_labels()
             lines2, labels2 = ax_0_1.get_legend_handles_labels()
@@ -999,13 +1130,16 @@ class TIDE:
             ax[1].set_ylabel('Event rate')
             ax[1].set_xticks(stats_per_i[stats_per_i['bin']==b]['period'].astype('str'))
             ax[1].set_xticklabels(stats_per_i[stats_per_i['bin']==b]['period'].astype('str'),rotation=90)
-            ax[1].legend(title='Bins', bbox_to_anchor=(0.5, -0.4), loc='lower center')
+            ax[1].set_yticks(ax[1].get_yticks(),ax[1].get_yticks()) #if remove this, there will be UserWarning because yticks not fixed
+            ax[1].set_yticklabels([f'{i:.2%}' for i in ax[1].get_yticks()])
+            ax[1].legend(title='Bins', bbox_to_anchor=(0.5, -0.2))
 
             # PSI over time
             bottom = np.zeros(stats_per_i['period'].unique().shape[0])
             for b in stats_per_i['bin'].unique():
                 labels = stats_per_i[stats_per_i['bin']==b]['period'].astype('str').values
-                heights = (stats_per_i[stats_per_i['bin']==b]['n_obs'] / (stats_per_i.groupby('period').sum()['n_obs'].values + self._epsilon)).values
+                #heights = (stats_per_i[stats_per_i['bin']==b]['n_obs'] / (stats_per_i.groupby('period').sum()['n_obs'].values + self._epsilon)).values
+                heights = (stats_per_i[stats_per_i['bin']==b]['sample_rate']).values
                 ax[2].bar(labels, heights, width=0.975, bottom = bottom, label=b, alpha = 0.5)
                 for i, val in enumerate(zip(heights,bottom + heights / 2)):
                     ax[2].annotate(f'{val[0]:.1%}',(i,val[1]),color='grey',ha='center',va='center')
@@ -1015,20 +1149,21 @@ class TIDE:
             ax[2].set_xlabel('Period')
             ax[2].set_ylabel('Bin size, %n_obs in period')
             ax[2].set_xticks(stats_per_i[stats_per_i['bin']==b]['period'].astype('str'))
-            ax[2].set_xticklabels(stats_per_i[stats_per_i['bin']==b]['period'].astype('str'),rotation=90)
+            ax[2].set_yticks(np.linspace(0,1,11),[f'{i:.0%}' for i in np.linspace(0,1,11)])
             
             ax_2_1 = ax[2].twinx()
+            ax_2_1.axhline(psi_border, color='red', ls='--', alpha=0.5, label=f'PSI thresh={psi_border:.4f}')
             ax_2_1.plot(stats_per_i[stats_per_i['bin']==b]['period'].astype('str'),
-                       stats_per_i[stats_per_i['bin']==b]['PSI_seq'], marker = '.', color = 'green', label = 'PSI_seq')
+                       stats_per_i[stats_per_i['bin']==b]['PSI_seq'], marker = '.', color = 'darkgreen', alpha=0.5, label = 'PSI_seq')
             
             for i,val in enumerate(stats_per_i[stats_per_i['bin']==b]['PSI_seq'].values):
-                ax_2_1.annotate(f'{val:.3f}',(i,val),ha='center')
+                ax_2_1.annotate(f'{val:.3f}',(i,val),ha='center',alpha=0.5)
 
             ax_2_1.plot(stats_per_i[stats_per_i['bin']==b]['period'].astype('str'),
-                       stats_per_i[stats_per_i['bin']==b]['PSI_base'], marker = '.', color = 'darkblue', label = 'PSI_base')
+                       stats_per_i[stats_per_i['bin']==b]['PSI_base'], marker = '.', color = 'darkblue', alpha=0.5, label = 'PSI_base')
             
             for i,val in enumerate(stats_per_i[stats_per_i['bin']==b]['PSI_base'].values):
-                ax_2_1.annotate(f'{val:.3f}',(i,val),ha='center')
+                ax_2_1.annotate(f'{val:.3f}',(i,val),ha='center',alpha=0.5)
             
             ax_2_1.set_ylim(0,np.clip(a = max(stats_per_i['PSI_seq'].fillna(0).max() * 1.1,
                                             stats_per_i['PSI_base'].fillna(0).max() * 1.1),
@@ -1038,7 +1173,7 @@ class TIDE:
 
             lines, labels = ax[2].get_legend_handles_labels()
             lines2, labels2 = ax_2_1.get_legend_handles_labels()
-            ax[2].legend(lines + lines2, labels + labels2, bbox_to_anchor=(0.5, -0.4), loc='lower center')
+            ax[2].legend(lines + lines2, labels + labels2, bbox_to_anchor=(0.5, -0.2))
             
             fig.tight_layout()
             plt.show()

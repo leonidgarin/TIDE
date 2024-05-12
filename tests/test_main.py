@@ -1,6 +1,8 @@
 import numpy as np
+import pandas as pd
 import pytest
 from tide.calc import calc_eventrates, calc_WoEs, calc_IVs, calc_PSIs
+from tide import TIDE
 
 
 def test_calc_eventrates():
@@ -9,23 +11,23 @@ def test_calc_eventrates():
     y = np.array([0,0,1,1]*500)
     composed_bins = {0:{(-np.inf, 2):'cont'},
                      1:{(2,+np.inf):'cont'}}
-    eventrates_left = calc_eventrates(x,
+    eventrates_right = calc_eventrates(x,
                                       y,
                                       composed_bins,
                                       idx_cont=None,
                                       round_brackets='right',
                                       epsilon=1e-6,
                                       return_counts=False)
-    assert np.all(np.isclose(np.array([0.5,0.5]),eventrates_left)) == True
+    assert np.all(np.isclose(np.array([0.5,0.5]),eventrates_right)) == True
 
-    eventrates_right = calc_eventrates(x,
+    eventrates_left = calc_eventrates(x,
                                        y,
                                        composed_bins,
                                        idx_cont=None,
                                        round_brackets='left',
                                        epsilon=1e-6,
                                        return_counts=False)
-    assert np.all(np.isclose(np.array([0.5,0.0]),eventrates_right)) == True
+    assert np.all(np.isclose(np.array([0.5,0.0]),eventrates_left)) == True
 
 
 def test_calc_WoEs():
@@ -126,3 +128,33 @@ def test_calc_PSIs_sequential():
     
     assert np.all(np.isclose(psi_check[1:], PSIs[1:])) == True
     assert np.isnan(PSIs[0]) == True
+
+
+def test_df_cont_1per():
+    size=10000
+    np.random.seed(123)
+    y = np.random.choice((0,1),p=(0.9,0.1),size=size)
+    per = np.tile(0,size)
+    x = np.where(y==1, np.random.normal(loc=0,scale=1,size=size), np.random.normal(loc=0,scale=1,size=size))
+    df = pd.DataFrame({'x':x,'y':y,'per':per})
+    mytide = TIDE(min_sample_rate = 0.05,
+                    min_class_obs = 1,
+                    min_bound = -np.inf,
+                    max_bound = np.inf,
+                    min_er_delta = 0,
+                    n_prebins = 'log',
+                    missing_categories = [],
+                    missing_strategy = 'separate_bin',
+                    missing_rate = 0.05,
+                    cat_strategy = 'separate_bin',
+                    alpha_significance = 0.05)
+    bins = mytide.fit(df[['x']],df['y'],df['per'], return_bins = True)
+    print(bins)
+    assert bins == {'x': {'trend': 'pos',
+                    'bins': {0: {(-np.inf, -1.4248190354707209): 'cont'},
+                    1: {(-1.4248190354707209, 0.22620696557053013): 'cont'},
+                    2: {(0.22620696557053013, 1.3991676705894323): 'cont'},
+                    3: {(1.3991676705894323, np.inf): 'cont'}}}}
+                        
+
+
