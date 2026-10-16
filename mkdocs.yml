@@ -1,0 +1,30 @@
+site_name: TIDE
+site_description: Time Invariant Discretization Engine - time-stable binning for credit scorecards
+repo_url: https://github.com/leonidgarin/TIDE
+theme:
+  name: material
+  features: [content.code.copy, navigation.sections]
+nav:
+  - Home: index.md
+  - User guide: guide.md
+  - Algorithm: algorithm.md
+  - API reference: api.md
+  - Changelog: changelog.md
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: numpy
+            show_source: false
+            members_order: source
+markdown_extensions:
+  - admonition
+  - tables
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
