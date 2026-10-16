@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.0 (unreleased)
+## 0.6.0 (2026-10-16)
 
 Complete rewrite. The greedy algorithm and its rules are unchanged: on the scenarios in
 `tests/golden`, the bins are identical to v0.5.0.
