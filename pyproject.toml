@@ -1,21 +1,75 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
 [project]
-authors = [{name = "Leonid Garin", email = "leonidgarin97@gmail.com"}]
-name = "tide"
-version = "0.5.0"
-description = "Time Invariant Discretization Engine - tool for time stable binning"
-dependencies = ["numpy","scipy","tqdm","pandas","matplotlib","scikit-learn"]
-requires-python = ">=3.8"
+name = "tide-binning"
+dynamic = ["version"]
+description = "TIDE - Time Invariant Discretization Engine: time-stable binning for credit scorecards"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Leonid Garin", email = "leonidgarin97@gmail.com" }]
+requires-python = ">=3.10"
+keywords = ["binning", "scorecard", "credit risk", "weight of evidence", "woe", "information value", "psi"]
 classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: MIT License",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+dependencies = [
+    "numpy>=1.23",
+    "pandas>=2.0",
+    "scipy>=1.9",
+    "scikit-learn>=1.4",
+    "matplotlib>=3.6",
+    "joblib>=1.3",
+    "tqdm>=4.60",
 ]
 
-[build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
+[project.optional-dependencies]
+test = ["pytest>=7", "pytest-cov>=4", "hypothesis>=6.80"]
+docs = ["mkdocs>=1.6,<2", "mkdocs-material>=9.5", "mkdocstrings[python]>=0.25"]
+dev = ["tide-binning[test,docs]", "ruff>=0.6", "build>=1.0", "twine>=5"]
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["tide*"]
+[project.urls]
+Homepage = "https://github.com/leonidgarin/TIDE"
+Issues = "https://github.com/leonidgarin/TIDE/issues"
+
+[tool.hatch.version]
+path = "src/tide/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tide"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/tide", "tests", "README.md", "LICENSE", "CHANGELOG.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+filterwarnings = ["error::FutureWarning", "error::DeprecationWarning:tide.*"]
+
+[tool.coverage.run]
+source = ["tide"]
+branch = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "NPY", "PD", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003", "PD011", "B905"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B", "PD", "RUF007", "RUF059"]
+"benchmarks/*" = ["B", "PD"]
